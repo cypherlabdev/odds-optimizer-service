@@ -15,7 +15,9 @@ import (
 
 	"github.com/cypherlabdev/odds-optimizer-service/internal/cache"
 	"github.com/cypherlabdev/odds-optimizer-service/internal/config"
+	httpHandler "github.com/cypherlabdev/odds-optimizer-service/internal/handler/http"
 	"github.com/cypherlabdev/odds-optimizer-service/internal/messaging"
+	"github.com/cypherlabdev/odds-optimizer-service/internal/service"
 	"github.com/cypherlabdev/odds-optimizer-service/pkg/optimizer"
 )
 
@@ -57,6 +59,11 @@ func main() {
 		cfg.Optimization.ToOptimizationParams(),
 		logger,
 	)
+	logger.Info().Msg("optimizer initialized")
+
+	// Create optimizer service layer
+	optimizerService := service.NewOptimizerService(opt, redisCache, logger)
+	logger.Info().Msg("optimizer service initialized")
 
 	// Create Kafka consumer
 	consumer := messaging.NewKafkaConsumer(
@@ -78,13 +85,23 @@ func main() {
 		}
 	}()
 
-	// Start HTTP server for health checks and metrics
+	// Initialize HTTP handler
+	oddsHandler := httpHandler.NewOddsHandler(optimizerService, logger)
+	logger.Info().Msg("HTTP handler initialized")
+
+	// Setup HTTP server routes
 	mux := http.NewServeMux()
+
+	// Health and monitoring endpoints
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		readyHandler(w, r, redisCache)
 	})
 	mux.Handle("/metrics", promhttp.Handler())
+
+	// Register API routes
+	oddsHandler.RegisterRoutes(mux)
+	logger.Info().Msg("API routes registered")
 
 	server := &http.Server{
 		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
